@@ -1,8 +1,7 @@
-# Folder source for Beacon
+# Beacon Folders
 
-One of the example apps for Beacon's external sources, and a complete one: it is meant to be
-run, not only read. It plays folders of music files in Beacon without
-adding them to your media server. It shows up as its own tab in Beacon with albums,
+An external source for [Beacon](https://github.com/mihaitom/beacon). It plays folders of
+music files in Beacon without adding them to your media server. It shows up as its own tab in Beacon with albums,
 artists, songs and search. Every song plays like any other, on the speakers too, and Beacon's
 own queue does the rest, shuffle included.
 
@@ -41,9 +40,9 @@ Formats: MP3, AAC/M4A, FLAC, Ogg Vorbis, Opus, WAV and WebM audio.
 
 ### Docker
 
-There is a ready-made image, `ghcr.io/mihaitom/beacon-folder-source`, for x86 machines
+There is a ready-made image, `ghcr.io/mihaitom/beacon-folders`, for x86 machines
 and ARM ones like a Raspberry Pi. `latest` is the newest version; a version number
-(`1.0.0`) stays on that version. It is not part of Beacon's own image.
+(`1.0.0`) stays on that version.
 
 #### Starting it
 
@@ -68,9 +67,9 @@ Two folders, each its own tab, with every setting written out:
 
 ```yaml
 services:
-  folder-source:
-    image: ghcr.io/mihaitom/beacon-folder-source:latest
-    container_name: beacon-folder-source
+  beacon-folders:
+    image: ghcr.io/mihaitom/beacon-folders:latest
+    container_name: beacon-folders
     restart: unless-stopped
     volumes:
       # Each folder under /music becomes a tab, named after its mount point.
@@ -95,18 +94,15 @@ services:
 
 In Beacon the address is then `http://<this host>:8800`. When Beacon runs in the same
 compose file on its default network (not with `network_mode: host`), it is
-`http://folder-source:8800` instead, and `ports:` can go.
+`http://beacon-folders:8800` instead, and `ports:` can go.
 
 #### Building it yourself
 
-Only needed to run changes of your own. A clone of Beacon's repository has the app at
-`docs/examples/folder-source`. To fetch only this folder instead of all of Beacon:
+Only needed to run changes of your own:
 
 ```bash
-git clone --depth 1 --filter=blob:none --sparse https://github.com/mihaitom/beacon.git
-cd beacon
-git sparse-checkout set docs/examples/folder-source
-cd docs/examples/folder-source
+git clone https://github.com/mihaitom/beacon-folders.git
+cd beacon-folders
 ```
 
 In `compose.yaml`, replace the `image:` line with `build: .`, then:
@@ -121,7 +117,7 @@ another processor than the machine you build on needs the image for its platform
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  -t registry.example.com/you/folder-source:latest --push .
+  -t registry.example.com/you/beacon-folders:latest --push .
 ```
 
 #### The data folder
@@ -153,7 +149,7 @@ In Beacon: **Settings > Library > External sources > Add source**.
 
 "As Beacon's server reaches it" matters when Beacon runs in Docker: `localhost` there is
 Beacon's own container. Use the host's address, or put both containers in one Docker
-network and use `http://beacon-folder-source:8800`.
+network and use `http://beacon-folders:8800`.
 
 The speakers never talk to this app. They play from Beacon, which fetches from here.
 
@@ -236,7 +232,9 @@ the page loads itself has to live below `/ui/`, because Beacon passes only that 
 through. Song and cover addresses handed to Beacon may point anywhere on this app.
 
 How Beacon and the page talk to each other is in Beacon's help, under **External source
-API** ([`docs/help/reference/external-source-api.md`](../../help/reference/external-source-api.md)).
-The tests run in Beacon's CI too, whenever something in this folder changes. The image is
-published by hand, from Beacon's repository; a new `version` in `pyproject.toml` gives it a
-new version tag.
+API** ([`docs/help/reference/external-source-api.md`](https://github.com/mihaitom/beacon/blob/development/docs/help/reference/external-source-api.md)).
+The tests run on every push and pull request. The image is published by hand (the
+**Publish image** workflow); a new `version` in `pyproject.toml` gives it a new version tag.
+
+Beacon's repository keeps an earlier copy of this app as an example, under
+`docs/examples/folder-source`. This repository is where it is developed further.

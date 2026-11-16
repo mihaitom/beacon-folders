@@ -16,7 +16,7 @@ wheels = [
 ]
 
 [[package]]
-name = "beacon-folder-source"
+name = "beacon-folders"
 version = "1.0.0"
 source = { virtual = "." }
 dependencies = [
