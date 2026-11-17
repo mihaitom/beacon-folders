@@ -29,6 +29,10 @@ const ICONS = {
   album:
     '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 14.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9m0-5.5a1 1 0 1 0 0 2 1 1 0 0 0 0-2"/>',
   artist: '<path d="M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8m0 10c4.42 0 8 1.79 8 4v2H4v-2c0-2.21 3.58-4 8-4"/>',
+  // Material Design Icons' folder-outline and folder-open, as Beacon has them.
+  folder: '<path d="M20 18H4V8h16m0-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2"/>',
+  folderOpen:
+    '<path d="M19 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h6l2 2h7a2 2 0 0 1 2 2H4v10l2.14-8h17.07l-2.28 8.5c-.23.87-1.01 1.5-1.93 1.5"/>',
 }
 const icon = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`
 
@@ -107,15 +111,48 @@ function send(items, mode) {
 
 async function playRows(rows, { mode = 'now', label } = {}) {
   if (!rows.length) return
+  const parts = []
   for (let start = 0; start < rows.length; start += MAX_PER_MESSAGE) {
-    const items = rows.slice(start, start + MAX_PER_MESSAGE).map((row) => row.item)
-    const result = await send(items, start === 0 ? mode : 'queue')
+    parts.push(rows.slice(start, start + MAX_PER_MESSAGE).map((row) => row.item))
+  }
+  // "next" puts every message straight after the song playing: the last part
+  // goes first, so the songs keep their order. Otherwise the first part
+  // starts (or joins) the queue and the rest follow it at the end.
+  const messages =
+    mode === 'next'
+      ? parts.reverse().map((items) => [items, 'next'])
+      : parts.map((items, i) => [items, i ? 'queue' : mode])
+  for (const [items, messageMode] of messages) {
+    const result = await send(items, messageMode)
     if (!result.ok) {
       toast(result.error || 'Could not play that')
       return
     }
   }
   if (label) toast(label)
+}
+
+// What the toast says after a song, an album or an artist went somewhere.
+function playedLabel(name, mode) {
+  if (mode === 'next') return `${name} plays next`
+  if (mode === 'queue') return `Added ${name}`
+  return ''
+}
+
+const playSong = (row, mode) => playRows([row], { mode, label: playedLabel(row.title, mode) })
+
+async function playAlbum(albumId, mode, { label = true } = {}) {
+  const album = await albumRows(albumId)
+  const text = mode === 'now' ? `Playing ${album.title}` : playedLabel(album.title, mode)
+  await playRows(album.tracks, { mode, label: label ? text : '' })
+}
+
+const artistAlbums = (name) => state.albums.filter((a) => (a.artist || 'Unknown artist') === name)
+
+async function playArtist(name, mode) {
+  const albums = artistAlbums(name).sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+  const rows = (await Promise.all(albums.map((a) => albumRows(a.id)))).flatMap((a) => a.tracks)
+  await playRows(rows, { mode, label: mode === 'now' ? `Playing ${name}` : playedLabel(name, mode) })
 }
 
 async function albumRows(albumId) {
@@ -535,7 +572,7 @@ function albumTile(album) {
     ? `<a class="sub" href="${link(`/artist/${encodeURIComponent(album.artist)}`)}">${esc(album.artist)}</a>`
     : `<div class="sub">${plural(album.songs, 'song')}</div>`
   return `
-    <div class="tile">
+    <div class="tile" data-menu-album="${album.id}">
       <div class="cover-wrap">
         <a href="${link(`/album/${album.id}`)}" aria-label="${esc(album.title)}">${cover(album.id, album.cover)}</a>
         <button class="play-fab" title="Play" data-play-album="${album.id}">${icon('play')}</button>
@@ -580,7 +617,7 @@ function backdrop(album, { full = false } = {}) {
 function feature(album) {
   const meta = [album.artist, album.year, plural(album.songs, 'song')].filter(Boolean).map(esc)
   return `
-    <section class="hero hero--feature">${backdrop(album)}
+    <section class="hero hero--feature" data-menu-album="${album.id}">${backdrop(album)}
       <a href="${link(`/album/${album.id}`)}">${cover(album.id, album.cover)}</a>
       <div class="hero-text">
         <div class="eyebrow">Just added</div>
@@ -691,7 +728,7 @@ const artistLetter = (artist) => letterOf(artist.name)
 
 function artistRow(artist) {
   return `
-    <a class="artist-row" href="${link(`/artist/${encodeURIComponent(artist.name)}`)}">
+    <a class="artist-row" href="${link(`/artist/${encodeURIComponent(artist.name)}`)}" data-menu-artist="${esc(artist.name)}">
       ${cover(artist.cover, !!artist.cover, { kind: 'artist' })}
       <span class="artist-text"><div class="name">${esc(artist.name)}</div>
       <div class="sub">${plural(artist.albums, 'album')}</div></span>
@@ -788,9 +825,7 @@ async function renderSongs() {
 }
 
 function renderArtist(name) {
-  const albums = state.albums
-    .filter((a) => (a.artist || 'Unknown artist') === name)
-    .sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
+  const albums = artistAlbums(name).sort((a, b) => (b.year ?? 0) - (a.year ?? 0))
   view.innerHTML = `
     <div class="section-head"><h1>${esc(name)}</h1><span class="count">${plural(albums.length, 'album')}</span>
       <button class="pill" data-play-artist>${icon('play')} Play</button></div>
@@ -874,13 +909,17 @@ function sectionOf(path) {
 const foldersBar = document.getElementById('folders')
 
 // Switching folders keeps the section: from one folder's songs to the next one's.
+// The folder on screen is the open one.
 function renderFolders(section) {
   foldersBar.hidden = state.folders.length < 2
   foldersBar.innerHTML = state.folders
-    .map(
-      (f) =>
-        `<a href="#/${f.key}${SECTIONS[section]}" class="${f.key === state.folder ? 'active' : ''}">${esc(f.name)}</a>`,
-    )
+    .map((f) => {
+      const active = f.key === state.folder
+      const songs = state.status?.folders.find((s) => s.key === f.key)?.songs
+      const size = songs ? `<span class="songs" title="${plural(songs, 'song')}">${count(songs)}</span>` : ''
+      return `<a href="#/${f.key}${SECTIONS[section]}" class="${active ? 'active' : ''}"${active ? ' aria-current="page"' : ''}>
+        ${icon(active ? 'folderOpen' : 'folder')}<span>${esc(f.name)}</span>${size}</a>`
+    })
     .join('')
   const name = state.folders.find((f) => f.key === state.folder)?.name
   searchInput.placeholder = state.folders.length > 1 && name ? `Search ${name}` : 'Search'
@@ -912,6 +951,181 @@ function route() {
   return renderAlbums()
 }
 
+// ── Right-click menu ───────────────────────────────────────────────────
+
+// Beacon's own right-click menu, for songs, albums and artists: cut into
+// Beacon's sections (Playback, then Navigation; this page has nothing for
+// Library or Dialogs), each under its heading, in Beacon's order. Inside the
+// frame Beacon's menu cannot open, so without this a right-click got the
+// browser's.
+
+const menu = document.getElementById('menu')
+let menuReturnFocus = null
+
+const go = (path) => (location.hash = link(path))
+
+function songMenu(row) {
+  const album = state.albums.find((a) => a.id === row.albumId)
+  const onAlbum = view.dataset.album === row.albumId
+  return [
+    [
+      'Playback',
+      [
+        ['play', 'Play', () => playSong(row, 'now')],
+        ['next', 'Play next', () => playSong(row, 'next')],
+        ['queue', 'Add to queue', () => playSong(row, 'queue')],
+      ],
+    ],
+    [
+      'Navigation',
+      [
+        row.albumId && !onAlbum && ['album', 'Go to album', () => go(`/album/${row.albumId}`)],
+        album?.artist && ['artist', 'Go to artist', () => go(`/artist/${encodeURIComponent(album.artist)}`)],
+      ],
+    ],
+  ]
+}
+
+function albumMenu(albumId) {
+  const album = state.albums.find((a) => a.id === albumId)
+  return [
+    [
+      'Playback',
+      [
+        ['play', 'Play', () => playAlbum(albumId, 'now')],
+        ['next', 'Play next', () => playAlbum(albumId, 'next')],
+        ['queue', 'Add to queue', () => playAlbum(albumId, 'queue')],
+      ],
+    ],
+    [
+      'Navigation',
+      [
+        ['album', 'Go to album', () => go(`/album/${albumId}`)],
+        album?.artist && ['artist', 'Go to artist', () => go(`/artist/${encodeURIComponent(album.artist)}`)],
+      ],
+    ],
+  ]
+}
+
+function artistMenu(name) {
+  return [
+    [
+      'Playback',
+      [
+        ['play', 'Play', () => playArtist(name, 'now')],
+        ['next', 'Play next', () => playArtist(name, 'next')],
+        ['queue', 'Add to queue', () => playArtist(name, 'queue')],
+      ],
+    ],
+    ['Navigation', [['artist', 'Go to artist', () => go(`/artist/${encodeURIComponent(name)}`)]]],
+  ]
+}
+
+/** What a right-click on `target` offers, or null: then the browser's own. */
+function menuFor(target) {
+  const row = target.closest('.row[data-row]')
+  if (row) return rowsOnScreen[row.dataset.row] ? songMenu(rowsOnScreen[row.dataset.row]) : null
+  const album = target.closest('[data-menu-album]')
+  if (album) return albumMenu(album.dataset.menuAlbum)
+  const artist = target.closest('[data-menu-artist]')
+  if (artist) return artistMenu(artist.dataset.menuArtist)
+  return null
+}
+
+let menuActions = []
+
+function openMenu(sections, x, y) {
+  menuActions = []
+  menu.innerHTML = sections
+    .map(([label, items]) => [label, items.filter(Boolean)])
+    .filter(([, items]) => items.length)
+    .map(
+      ([label, items]) =>
+        `<div class="menu-section" role="presentation">${esc(label)}</div>` +
+        items
+          .map(([name, text, action]) => {
+            menuActions.push(action)
+            const index = menuActions.length - 1
+            return `<button class="menu-item" role="menuitem" tabindex="-1" data-action="${index}">
+              ${icon(name)}<span>${esc(text)}</span></button>`
+          })
+          .join(''),
+    )
+    .join('')
+  menuReturnFocus = document.activeElement
+  menu.hidden = false
+  // Where the pointer is, turned back at the window's edges the way a
+  // desktop menu is.
+  const box = menu.getBoundingClientRect()
+  const left = x + box.width > window.innerWidth - 8 ? Math.max(8, x - box.width) : x
+  const top = y + box.height > window.innerHeight - 8 ? Math.max(8, y - box.height) : y
+  menu.style.left = `${left}px`
+  menu.style.top = `${top}px`
+  menu.style.transformOrigin = `${left < x ? 'right' : 'left'} ${top < y ? 'bottom' : 'top'}`
+  menu.classList.remove('open')
+  void menu.offsetWidth
+  menu.classList.add('open')
+  menu.querySelector('.menu-item')?.focus({ preventScroll: true })
+}
+
+function closeMenu() {
+  if (menu.hidden) return
+  menu.hidden = true
+  menu.classList.remove('open')
+  menuActions = []
+  if (menuReturnFocus?.isConnected) menuReturnFocus.focus({ preventScroll: true })
+  menuReturnFocus = null
+}
+
+view.addEventListener('contextmenu', (event) => {
+  const sections = menuFor(event.target)
+  if (!sections) return closeMenu()
+  event.preventDefault()
+  // From the keyboard (the menu key, Shift+F10) there is no pointer: the
+  // menu opens at the row or tile that has the focus.
+  if (event.clientX === 0 && event.clientY === 0) {
+    const box = event.target.getBoundingClientRect()
+    return openMenu(sections, box.left + 16, box.top + box.height / 2)
+  }
+  openMenu(sections, event.clientX, event.clientY)
+})
+
+menu.addEventListener('click', (event) => {
+  const item = event.target.closest('.menu-item')
+  if (!item) return
+  const action = menuActions[item.dataset.action]
+  closeMenu()
+  action?.()
+})
+
+menu.addEventListener('contextmenu', (event) => event.preventDefault())
+
+menu.addEventListener('keydown', (event) => {
+  const items = [...menu.querySelectorAll('.menu-item')]
+  const index = items.indexOf(document.activeElement)
+  const move = { ArrowDown: 1, ArrowUp: -1 }[event.key]
+  if (move) {
+    event.preventDefault()
+    items[(index + move + items.length) % items.length].focus()
+  } else if (event.key === 'Home' || event.key === 'End') {
+    event.preventDefault()
+    items.at(event.key === 'Home' ? 0 : -1).focus()
+  } else if (event.key === 'Escape' || event.key === 'Tab') {
+    event.preventDefault()
+    closeMenu()
+  }
+})
+
+// Anywhere else closes it, and so does scrolling: a menu left where the
+// pointer was would end up over something else (Beacon's menus do the same).
+document.addEventListener('pointerdown', (event) => {
+  if (!menu.contains(event.target)) closeMenu()
+})
+window.addEventListener('scroll', closeMenu, { passive: true })
+window.addEventListener('resize', closeMenu)
+window.addEventListener('blur', closeMenu)
+window.addEventListener('hashchange', closeMenu)
+
 // ── Events ─────────────────────────────────────────────────────────────
 
 view.addEventListener('change', (event) => {
@@ -932,26 +1146,15 @@ view.addEventListener('click', async (event) => {
   if (!button) return
   const { dataset } = button
   if (dataset.play !== undefined) {
-    const row = rowsOnScreen[dataset.play]
-    const result = await send([row.item], dataset.mode)
-    if (!result.ok) toast(result.error || 'Could not play that')
-    else if (dataset.mode === 'next') toast(`${row.title} plays next`)
-    else if (dataset.mode === 'queue') toast(`Added ${row.title}`)
+    await playSong(rowsOnScreen[dataset.play], dataset.mode)
   } else if (dataset.playAlbum) {
-    const album = await albumRows(dataset.playAlbum)
-    await playRows(album.tracks, { label: `Playing ${album.title}` })
+    await playAlbum(dataset.playAlbum, 'now')
   } else if (dataset.albumAction) {
-    const album = await albumRows(view.dataset.album)
-    const action = dataset.albumAction
-    if (action === 'play') await playRows(album.tracks)
-    if (action === 'queue') {
-      await playRows(album.tracks, { mode: 'queue', label: `Added ${album.title}` })
-    }
+    // On the album's own page, playing it needs no toast to say so.
+    const mode = dataset.albumAction === 'queue' ? 'queue' : 'now'
+    await playAlbum(view.dataset.album, mode, { label: mode === 'queue' })
   } else if (dataset.playArtist !== undefined) {
-    const name = currentPath().slice('/artist/'.length)
-    const albums = state.albums.filter((a) => (a.artist || 'Unknown artist') === name)
-    const rows = (await Promise.all(albums.map((a) => albumRows(a.id)))).flatMap((a) => a.tracks)
-    await playRows(rows, { label: `Playing ${name}` })
+    await playArtist(currentPath().slice('/artist/'.length), 'now')
   } else if (dataset.playResults !== undefined) {
     await playRows(rowsOnScreen, { label: 'Playing the results' })
   }
